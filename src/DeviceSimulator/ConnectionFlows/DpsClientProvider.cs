@@ -8,6 +8,7 @@ using Microsoft.Azure.Devices.Client;
 using Microsoft.Azure.Devices.Provisioning.Client;
 using Microsoft.Azure.Devices.Provisioning.Client.Transport;
 using Microsoft.Azure.Devices.Shared;
+using Microsoft.Extensions.Logging;
 
 namespace ImpruvIT.Azure.IoT.DeviceSimulator.ConnectionFlows
 {
@@ -21,42 +22,47 @@ namespace ImpruvIT.Azure.IoT.DeviceSimulator.ConnectionFlows
             Options options,
             ProvisioningTransportHandler dpsTransport,
             IEnumerable<ITransportSettings> hubTransports,
-            ClientOptions clientOptions)
+            ClientOptions clientOptions,
+            ILogger logger)
         {
             Options = options;
+            Logger = logger;
             this.dpsTransport = dpsTransport;
             this.hubTransports = hubTransports.ToArray();
             this.clientOptions = clientOptions;
         }
-        
+
         protected Options Options { get; }
+        protected ILogger Logger { get; }
 
         public async Task<DeviceClient> Provide(CancellationToken cancellationToken = default)
         {
             using var security = GetDpsAuthentication();
 
+            var dpsEndpoint = !string.IsNullOrEmpty(Options.DpsHostname) ? Options.DpsHostname : "global.azure-devices-provisioning.net";
             var provClient = ProvisioningDeviceClient.Create(
-                !string.IsNullOrEmpty(Options.DpsHostname) ? Options.DpsHostname : "global.azure-devices-provisioning.net",
+                dpsEndpoint,
                 Options.ScopeId,
                 security,
                 dpsTransport);
 
-            Console.WriteLine("Registering with the DPS...");
+            Logger.LogDebug("Registering with the DPS endpoint '{DpsEndpoint}'", dpsEndpoint);
             DeviceRegistrationResult result = await provClient.RegisterAsync(cancellationToken);
 
-            Console.WriteLine($"Registration status: {result.Status}.");
             if (result.Status != ProvisioningRegistrationStatusType.Assigned)
             {
-                Console.WriteLine($"Registration status did not assign a hub, so exiting this sample.");
+                Logger.LogError("Registration with DPS failed with status '{Status}' and error '{Error}' ({ErrorCode})", result.Status, result.ErrorMessage,
+                    result.ErrorCode);
                 throw new InvalidOperationException();
             }
+            else
+            {
+                Logger.LogDebug("Registering with DPS succeeded.");
+            }
 
-            Console.WriteLine($"Device {result.DeviceId} registered to {result.AssignedHub}.");
+            Logger.LogInformation("The device '{DeviceId}' is successfully registered to '{AssignedHub}'.", result.DeviceId, result.AssignedHub);
 
-            Console.WriteLine("Creating SAS authentication for IoT Hub...");
             var auth = GetDeviceAuthentication(result);
-
-            Console.WriteLine($"Testing the provisioned device with IoT Hub...");
             return DeviceClient.Create(result.AssignedHub, Options.GatewayHostname, auth, hubTransports, clientOptions);
         }
 

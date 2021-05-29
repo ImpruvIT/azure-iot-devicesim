@@ -31,7 +31,7 @@ namespace ImpruvIT.Azure.IoT.DeviceSimulator.Configuration
             if (options.CertificatePath != null)
                 return serviceProvider.GetRequiredService<CertificateManualClientProvider>();
 
-            throw new NotSupportedException();
+            throw new ConfigurationException("Unable to determine connection flow based on the supplied arguments.");
         }
     }
 }

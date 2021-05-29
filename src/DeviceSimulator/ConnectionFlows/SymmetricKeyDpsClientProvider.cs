@@ -7,6 +7,7 @@ using Microsoft.Azure.Devices.Client;
 using Microsoft.Azure.Devices.Provisioning.Client;
 using Microsoft.Azure.Devices.Provisioning.Client.Transport;
 using Microsoft.Azure.Devices.Shared;
+using Microsoft.Extensions.Logging;
 
 namespace ImpruvIT.Azure.IoT.DeviceSimulator.ConnectionFlows
 {
@@ -18,13 +19,23 @@ namespace ImpruvIT.Azure.IoT.DeviceSimulator.ConnectionFlows
             Options options,
             ProvisioningTransportHandler dpsTransport,
             IEnumerable<ITransportSettings> hubTransports,
-            ClientOptions clientOptions)
-            : base(options, dpsTransport, hubTransports, clientOptions)
+            ClientOptions clientOptions,
+            ILogger<SymmetricKeyDpsClientProvider> logger)
+            : base(options, dpsTransport, hubTransports, clientOptions, logger)
         {
             dpsAuthentication = new Lazy<SecurityProviderSymmetricKey>(CreateDpsAuthentication);
         }
 
-        protected override SecurityProvider GetDpsAuthentication() => dpsAuthentication.Value;
+        protected override SecurityProvider GetDpsAuthentication()
+        {
+            var auth = dpsAuthentication.Value;
+
+            Logger.LogDebug(
+                "Registering as registration '{RegistrationId}' using symmetric key authentication.",
+                auth.GetRegistrationID());
+
+            return auth;
+        }
 
         protected override IAuthenticationMethod GetDeviceAuthentication(DeviceRegistrationResult result)
         {
@@ -34,16 +45,26 @@ namespace ImpruvIT.Azure.IoT.DeviceSimulator.ConnectionFlows
             if (string.IsNullOrEmpty(deviceKey))
                 deviceKey = dpsAuth.GetSecondaryKey();
 
+            Logger.LogDebug("Authenticating to IoT Hub using a symmetric key authentication.");
+
             return new DeviceAuthenticationWithRegistrySymmetricKey(result.DeviceId, deviceKey);
         }
 
-        private SecurityProviderSymmetricKey CreateDpsAuthentication() => new(
-            Options.RegistrationId,
-            GetDeviceKey(Options.SymmetricKey),
-            Options.SymmetricKey2 != null ? GetDeviceKey(Options.SymmetricKey2) : null);
+        private SecurityProviderSymmetricKey CreateDpsAuthentication()
+        {
+            if (string.IsNullOrEmpty(Options.RegistrationId))
+                throw new ConfigurationException("The DPS registration id has to be specified.");
+            if (string.IsNullOrEmpty(Options.SymmetricKey))
+                throw new ConfigurationException("The authentication symmetric key has to be specified.");
 
-        private string GetDeviceKey(string symmetricKey) => 
-            Options.IsIndividual ? symmetricKey : ComputeDerivedSymmetricKey(symmetricKey, Options.RegistrationId);
+            return new(
+                Options.RegistrationId,
+                GetDeviceKey(Options.SymmetricKey),
+                Options.SymmetricKey2 != null ? GetDeviceKey(Options.SymmetricKey2) : null);
+        }
+
+        private string GetDeviceKey(string symmetricKey) =>
+            Options.IsIndividual ? symmetricKey : ComputeDerivedSymmetricKey(symmetricKey, Options.RegistrationId!);
 
         private static string ComputeDerivedSymmetricKey(string masterKey, string registrationId)
         {
